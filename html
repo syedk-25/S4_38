@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SafeScan — Demo Scanner</title>
+
+  <style>
+    :root{
+      --bg: #f7fafc; --card:#fff; --muted:#6b7280;
+      --green:#28a745; --yellow:#ffc107; --orange:#ff8c42; --red:#dc3545;
+      --glass: rgba(255,255,255,0.9);
+    }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:var(--bg); margin:0; padding:28px; color:#0f172a;}
+    .wrap{max-width:980px;margin:0 auto;}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+    h1{margin:0;font-size:20px}
+    p.lead{margin:0;color:var(--muted)}
+    .card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(2,6,23,0.06);margin-bottom:16px}
+    label{font-weight:600;font-size:13px;color:#0f172a}
+    input[type="text"], textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eef8;margin-top:8px;margin-bottom:12px;font-family:inherit}
+    button{padding:10px 14px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:700;cursor:pointer}
+    .row{display:flex;gap:12px}
+    .col{flex:1}
+    .small{font-size:13px;color:var(--muted)}
+    .badge{display:inline-block;padding:8px 12px;border-radius:999px;font-weight:700;color:white}
+    .result{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    ul.reasons{margin:8px 0 0 18px;color:#0f172a}
+    .log-table{width:100%;border-collapse:collapse;margin-top:8px}
+    .log-table th, .log-table td{border-bottom:1px solid #eef2f7;padding:8px;text-align:left;font-size:13px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    .samples{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    .chip{padding:8px 10px;border-radius:8px;background:#f1f5f9;cursor:pointer;border:1px solid #e6eef8}
+    .muted{color:var(--muted);font-size:13px}
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+    @media (max-width:640px){ .row{flex-direction:column} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>SafeScan — Demo Phishing Identifier</h1>
+        <p class="lead">Paste a URL or upload a QR image. This demo uses simple heuristics (no live malicious browsing).</p>
+      </div>
+    </header>
+
+    <div class="card">
+      <label>Paste URL to analyze</label>
+      <input id="urlInput" type="text" placeholder="https://example[.]com/login or https://bit[.]ly/abc123" />
+      <div class="row">
+        <div class="col">
+          <button id="analyzeBtn">Analyze URL</button>
+          <button id="analyzeClipboard">Analyze from clipboard</button>
+        </div>
+        <div class="col" style="flex:0 0 260px;">
+          <div class="small">Upload QR image (PNG/JPG) containing a URL</div>
+          <input id="qrFile" type="file" accept="image/*" style="margin-top:8px" />
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <div id="resultArea" class="card" style="display:none;"></div>
+        <div id="explainArea" style="display:none;"></div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <div class="small">Sample obfuscated test URLs (safe to use in demo):</div>
+        <div class="samples" id="samples"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <strong>Scan History (stored locally)</strong>
+          <div class="muted">Download the CSV to use in your dashboard</div>
+        </div>
+        <div class="controls">
+          <button id="downloadCsv">Download CSV</button>
+          <button id="clearLog" style="background:#ef4444">Clear log</button>
+        </div>
+      </div>
+
+      <table class="log-table" id="logTable">
+        <thead><tr><th>Time</th><th>URL</th><th>Score</th><th>Label</th><th>Reasons</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <strong>How this demo works (kid-friendly)</strong>
+      <ol>
+        <li>It checks the URL text for suspicious signs (shorteners, weird domain, lots of hyphens, IP address, etc.).</li>
+        <li>It gives a simple score 0–100 and a color badge: green (safe), yellow (moderate), orange (high), red (critical).</li>
+        <li>It shows short explainable reasons why it flagged the URL.</li>
+      </ol>
+      <div class="muted">To use real VirusTotal / Google Safe Browsing, replace the analyzeUrl() function with an API call to your backend (instructions below).</div>
+    </div>
+
+    <footer>Built for demo — safe & local. Do not paste real sensitive private links here. Use obfuscated examples (replace . with [.] ).</footer>
+  </div>
+
+  <!-- jsQR library for QR decoding (file upload decoding) -->
+  <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
+
+  <script>
+  // =========== samples ============
+  const sampleList = [
+    "http://login-paypal[.]com/verify",
+    "https://secure-paypal-login[.]com/session?id=1234",
+    "http://accounts.google-support[.]com/signin",
+    "https://amazon-account-update[.]com/confirm",
+    "https://bit[.]ly/secure-paytm-check",
+    "https://xn--ppal-7ve[.]com/login",
+    "https://www.google[.]com",
+    "https://github[.]com/your-team/repo"
+  ];
+  const samplesDiv = document.getElementById('samples');
+  for(const s of sampleList){
+    const btn = document.createElement('div');
+    btn.className = 'chip';
+    btn.textContent = s;
+    btn.onclick = ()=>{ document.getElementById('urlInput').value = s; analyzeAndShow(s); };
+    samplesDiv.appendChild(btn);
+  }
+
+  // =========== helpers ============
+  function isIpHost(host){
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+  }
+  function extractHost(url){
+    try{
+      // replace obfuscated [.] so URL object works for tests
+      const cleaned = url.replace(/\[\.\]/g,'.').replace(/\s+/g,'').trim();
+      const u = new URL(cleaned);
+      return u.hostname;
+    }catch(e){
+      // try to extract naive host
+      const m = url.match(/:\/\/([^\/]+)/);
+      return m ? m[1].replace(/\[\.\]/g,'.') : url;
+    }
+  }
+  function containsShortener(host){
+    const list = ["bit.ly","t.co","tinyurl.com","ow.ly","goo.gl","lnkd.in"];
+    return list.some(s => host.includes(s));
+  }
+  function isPunycode(host){
+    return host.startsWith('xn--') || host.includes('xn--');
+  }
+  function suspiciousTLD(host){
+    const suspicious = ["ml","xyz","top","online","club","info","site"];
+    for(const t of suspicious){
+      if(host.endsWith('.'+t)) return true;
+    }
+    return false;
+  }
+
+  // =========== core scoring logic ============
+  function analyzeUrlHeuristics(url){
+    // returns {score:int, label:string, reasons:[]}
+    const reasons = [];
+    const cleaned = url.replace(/\[\.\]/g,'.').trim();
+    let score = 0; // 0 safe ... 100 dangerous-ish
+
+    // 1. length
+    if(cleaned.length > 75){ score += 18; reasons.push("Very long URL (often suspicious)"); }
+
+    // 2. @ symbol
+    if(cleaned.includes('@')){ score += 25; reasons.push("Contains '@' which can hide real host"); }
+
+    // 3. many hyphens or dots
+    const hyph = (cleaned.match(/-/g)||[]).length;
+    const dots = (cleaned.match(/\./g)||[]).length;
+    if(hyph > 3){ score += 12; reasons.push("Multiple hyphens in URL"); }
+    if(dots > 4){ score += 8; reasons.push("Many subdomains/dots"); }
+
+    // 4. shortener
+    const host = extractHost(url).toLowerCase();
+    if(containsShortener(host)){ score += 28; reasons.push("Uses a URL shortener (hides final destination)"); }
+
+    // 5. ip as host
+    if(isIpHost(host)){ score += 30; reasons.push("Uses raw IP address as host"); }
+
+    // 6. suspicious TLD
+    if(suspiciousTLD(host)){ score += 18; reasons.push("Suspicious or uncommon top-level domain"); }
+
+    // 7. punycode lookalike
+    if(isPunycode(host)){ score += 20; reasons.push("Punycode / lookalike domain (may impersonate brands)"); }
+
+    // 8. brand lookalike (simple)
+    const brands = ["paypal","amazon","google","apple","paytm","facebook","bank","icici","hsbc","linkedin"];
+    for(const b of brands){
+      if(host.includes(b) && !host.startsWith(b+".") && !host.endsWith(b+".com") && !host.endsWith("."+b+".com")){
+        // if brand name appears but not in clean expected position, mark suspicious
+        score += 14;
+        reasons.push(`Contains brand-like text '${b}' (possible impersonation)`);
+        break;
+      }
+    }
+
+    // 9. tiny sanitization check: if url contains suspicious query tokens (login, verify, session)
+    if(/login|verify|signin|session|confirm|account|update/i.test(cleaned)){
+      score += 8;
+      reasons.push("Contains words like 'login'/'verify'/'session' (common for credential harvesters)");
+    }
+
+    // clamp
+    if(score > 100) score = 100;
+
+    // labeling
+    let label = "Safe";
+    if(score >= 81) label = "Critical";
+    else if(score >= 61) label = "High";
+    else if(score >= 31) label = "Moderate";
+    else label = "Low";
+
+    // if no reasons, push a benign reason
+    if(reasons.length === 0) reasons.push("No obvious lexical suspicious signs found (not a guarantee it's safe).");
+
+    return {score, label, reasons};
+  }
+
+  // =========== UI & logging ============
+  function colorForScore(score){
+    if(score>=81) return 'var(--red)';
+    if(score>=61) return 'var(--orange)';
+    if(score>=31) return 'var(--yellow)';
+    return 'var(--green)';
+  }
+
+  function showResult(url, analysis){
+    const resultArea = document.getElementById('resultArea');
+    const explain = document.getElementById('explainArea');
+    resultArea.style.display = 'block';
+    explain.style.display = 'block';
+    resultArea.innerHTML = `
+      <div class="result">
+        <div>
+          <div style="font-size:14px;color:var(--muted)">Analyzed URL</div>
+          <div style="font-family:monospace;font-size:13px;margin-top:4px;background:#f8fafc;padding:8px;border-radius:6px">${escapeHtml(url)}</div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div style="font-size:13px;color:var(--muted)">Threat score</div>
+          <div class="badge" style="background:${colorForScore(analysis.score)};margin-top:6px">${analysis.score}</div>
+          <div style="margin-top:6px;font-weight:700;color:${colorForScore(analysis.score)}">${analysis.label}</div>
+        </div>
+      </div>
+    `;
+    explain.innerHTML = `<div class="small" style="margin-top:10px"><strong>Reasons:</strong></div>
+      <ul class="reasons">${analysis.reasons.map(r=>"<li>"+escapeHtml(r)+"</li>").join('')}</ul>`;
+
+    // save to local log
+    addToLog({time:new Date().toISOString(), url, score:analysis.score, label:analysis.label, reasons:analysis.reasons.join('|')});
+    refreshLogTable();
+  }
+
+  // localStorage log helpers
+  function getLog(){ return JSON.parse(localStorage.getItem('safescan_log')||'[]'); }
+  function setLog(arr){ localStorage.setItem('safescan_log', JSON.stringify(arr)); }
+  function addToLog(entry){
+    const arr = getLog();
+    arr.unshift(entry);
+    if(arr.length>200) arr.pop();
+    setLog(arr);
+  }
+  function refreshLogTable(){
+    const tbody = document.querySelector('#logTable tbody');
+    tbody.innerHTML = '';
+    const rows = getLog();
+    for(const r of rows.slice(0,80)){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td style="width:170px">${(new Date(r.time)).toLocaleString()}</td>
+                      <td style="font-family:monospace">${escapeHtml(r.url)}</td>
+                      <td>${r.score}</td>
+                      <td>${r.label}</td>
+                      <td>${escapeHtml(r.reasons)}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function downloadCSV(){
+    const rows = getLog();
+    if(rows.length===0){ alert("No logs yet."); return; }
+    const header = ["time","url","score","label","reasons"];
+    const csv = [header.join(',')].concat(rows.map(r=>[r.time,`"${r.url.replace(/"/g,'""')}"`,r.score,r.label,`"${r.reasons.replace(/"/g,'""')}"`].join(','))).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'safescan_logs.csv'; document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function clearLog(){
+    if(confirm("Clear local scan history?")){ localStorage.removeItem('safescan_log'); refreshLogTable(); }
+  }
+
+  // =========== main analyze function (safe local heuristics) ============
+  async function analyzeAndShow(rawUrl){
+    const analysis = analyzeUrlHeuristics(rawUrl || document.getElementById('urlInput').value || '');
+    showResult(rawUrl || document.getElementById('urlInput').value, analysis);
+    // NOTE: To use real external APIs:
+    // - replace the above with fetch('/your-backend/analyze', {method:'POST', body: JSON.stringify({urls:[url]})}) and show the returned data.
+    // - keep privacy in mind: prefer sending SHA256 hash of files rather than raw files.
+  }
+
+  // small helper
+  function escapeHtml(s){ return s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+
+  // =========== QR decode from uploaded file ============
+  document.getElementById('qrFile').addEventListener('change', async (e)=>{
+    const f = e.target.files[0];
+    if(!f) return;
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = function(ev){
+      img.src = ev.target.result;
+      img.onload = function(){
+        // draw to canvas
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img,0,0);
+        const id = ctx.getImageData(0,0,c.width,c.height);
+        const code = jsQR(id.data, id.width, id.height);
+        if(code && code.data){
+          const decoded = code.data;
+          document.getElementById('urlInput').value = decoded;
+          analyzeAndShow(decoded);
+        } else {
+          alert('No QR code detected in the image. Try a clearer photo or larger image.');
+        }
+      }
+    }
+    reader.readAsDataURL(f);
+  });
+
+  // =========== button wiring ============
+  document.getElementById('analyzeBtn').onclick = ()=> analyzeAndShow();
+  document.getElementById('analyzeClipboard').onclick = async ()=>{
+    try{
+      const text = await navigator.clipboard.readText();
+      if(!text) return alert("Clipboard empty or permission denied.");
+      document.getElementById('urlInput').value = text;
+      analyzeAndShow(text);
+    }catch(e){ alert("Unable to read clipboard. Permission denied or not supported."); }
+  };
+  document.getElementById('downloadCsv').onclick = downloadCSV;
+  document.getElementById('clearLog').onclick = clearLog;
+
+  // on load
+  refreshLogTable();
+
+  </script>
+</body>
+</html>
