@@ -1,0 +1,145 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TotalVirus - Prototype</title>
+  <style>
+    :root{--bg:#0b0f14;--panel:#0f1720;--accent:#00e6b8;--muted:#89a1b3;--danger:#ff6b6b}
+    body{background: radial-gradient(ellipse at 10% 10%, rgba(0,230,184,0.03), transparent 8%), linear-gradient(180deg,#071018 0%, #05060a 100%), var(--bg); color:var(--accent); font-family:Inter,Arial; margin:0; padding:20px}
+    .wrap{max-width:980px;margin:10px auto}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:18px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.6)}
+    h1{margin:0;color:#c9fff0}
+    p.lead{color:var(--muted)}
+    textarea{width:100%;min-height:160px;padding:12px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--accent);resize:vertical}
+    button{background:linear-gradient(90deg,var(--accent),#00b38f);color:#031219;padding:10px 14px;border-radius:10px;border:none;cursor:pointer;font-weight:600}
+    .flex{display:flex;gap:12px}
+    .half{flex:1}
+    .result{margin-top:14px;padding:12px;border-radius:10px;background:rgba(0,0,0,0.35)}
+    .score{font-size:36px;font-weight:700}
+    .reason{color:var(--muted);margin-top:8px}
+    .note{color:#8ea9b3;font-size:13px}
+    a.fake{color:var(--accent);text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>TotalVirus — Anti‑Phish Prototype</h1>
+      <p class="lead">Paste suspicious email text/headers or a URL. You can also open the QR scanner (camera) and paste the decoded URL.</p>
+
+      <div style="margin-top:12px" class="flex">
+        <div class="half">
+          <label class="note">Paste email / URL / headers</label>
+          <textarea id="inputText" placeholder="Paste suspicious email text, headers, or URL..."></textarea>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <button id="scanBtn">Scan & Generate Threat Score</button>
+            <span class="note">Tip: include headers for better results.</span>
+          </div>
+        </div>
+
+        <div class="half">
+          <label class="note">QR / Image (client‑side)</label>
+          <p class="note">Open the camera, point at a QR that contains a URL — it will paste the URL above.</p>
+          <div style="margin-top:8px">
+            <button id="openQR">Open QR Scanner</button>
+          </div>
+          <div id="qrArea" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div id="result" class="result" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="score" id="scoreVal">0</div>
+            <div id="scoreLabel" class="note">Safe</div>
+          </div>
+          <div style="text-align:right">
+            <div id="actionArea"></div>
+            <div class="note">Session: <span id="sessId"></span></div>
+          </div>
+        </div>
+        <div id="reasonList" class="reason"></div>
+      </div>
+
+      <div style="margin-top:12px" class="note">Dashboard: <a class="fake" href="/dashboard">/dashboard</a> (local only)</div>
+    </div>
+  </div>
+
+<script>
+const sess = Math.random().toString(36).slice(2,10);
+document.getElementById('sessId').textContent = sess;
+
+async function scanText(){
+  const text = document.getElementById('inputText').value;
+  if(!text.trim()){ alert('Paste something to scan'); return; }
+  const res = await fetch('/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ input:text, session_id:sess })});
+  const j = await res.json();
+  showResult(j);
+}
+
+function showResult(j){
+  document.getElementById('result').style.display = 'block';
+  document.getElementById('scoreVal').textContent = j.threat_score;
+  const label = document.getElementById('scoreLabel');
+  if(j.threat_score >= 60){ label.textContent='High Risk'; label.style.color='#ff7b7b'; }
+  else if(j.threat_score >= 30){ label.textContent='Suspicious'; label.style.color='#ffd27f'; }
+  else { label.textContent='Low Risk'; label.style.color='#9fffcf'; }
+
+  const rl = document.getElementById('reasonList'); rl.innerHTML = '';
+  j.reasons.forEach(r => {
+    const d = document.createElement('div'); d.textContent = '• ' + r; rl.appendChild(d);
+  });
+
+  const action = document.getElementById('actionArea'); action.innerHTML = '';
+  if(j.threat_score >= 30){
+    const b = document.createElement('button'); b.textContent = 'Launch Safe Simulation';
+    b.onclick = () => { window.location.href = '/simulate/' + j.sim_id + '?session=' + j.session_id; };
+    action.appendChild(b);
+  }
+}
+
+document.getElementById('scanBtn').addEventListener('click', scanText);
+
+// QR scanning (client-side) using jsQR
+let stream = null;
+document.getElementById('openQR').addEventListener('click', async ()=>{
+  const area = document.getElementById('qrArea'); area.innerHTML = '';
+  const video = document.createElement('video'); video.style.maxWidth='100%'; area.appendChild(video);
+  const canvas = document.createElement('canvas'); canvas.style.display='none'; area.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }});
+    video.srcObject = stream; await video.play();
+
+    const tick = () => {
+      if(video.readyState === video.HAVE_ENOUGH_DATA){
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0);
+        const imageData = ctx.getImageData(0,0,canvas.width, canvas.height);
+        if(window.jsQR){
+          const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+          if(code){
+            stopStream(); document.getElementById('inputText').value = code.data;
+            alert('QR detected and pasted. Click Scan to analyze.');
+            return;
+          }
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  } catch(e){
+    alert('Camera access failed: ' + e.message);
+  }
+});
+
+function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; } }
+
+// load jsQR
+(function(){ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'; document.head.appendChild(s); })();
+</script>
+</body>
+</html>
